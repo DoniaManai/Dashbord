@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>Marina di Pisa Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- MapLibre base CSS for default map control styling -->
+  <link href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css" rel="stylesheet" />
+
+  <style>
+    /* ====== Layout & basic containers ====== */
+    html, body { height:100%; margin:0; }
+    /* The map fills the entire viewport; UI floats above it */
+    #map { position:absolute; inset:0; }
+
+    /* ====== Layer legend / toggles ====== */
+    #panel{
+      position:absolute; left:14px; top:70px; z-index:6;
+      background:#fff; border-radius:12px; box-shadow:0 6px 16px rgba(0,0,0,.12);
+      padding:12px 14px; font:14px/1.4 system-ui, sans-serif; min-width:220px;
+    }
+    #panel h4{ margin:0 0 8px; font-weight:600; }
+    #panel label{ display:flex; gap:8px; margin:6px 0; align-items:center; }
+
+    /* ====== Move MapLibre built-in controls ====== */
+    .maplibregl-ctrl-top-right{
+      margin:10px; display:flex; flex-direction:column; align-items:flex-end; gap:8px; z-index:7;
+    }
+    .maplibregl-ctrl-top-left{
+      margin:10px; display:flex; flex-direction:column; align-items:flex-start; gap:8px; z-index:7;
+    }
+
+    /* ====== Style switcher (small floating FAB with a popup) ====== */
+    #styleFab{ position:absolute; right:14px; top:80px; z-index:9; pointer-events:auto; }
+    #styleBtn{
+      width:44px; height:44px; border-radius:10px; border:none; cursor:pointer;
+      background:#fff; box-shadow:0 6px 18px rgba(0,0,0,.22);
+      display:flex; align-items:center; justify-content:center;
+    }
+    #styleBtn svg{ width:22px; height:22px; }
+    #stylePopup{
+      position:absolute; right:56px; top:0; display:none; padding:10px; border-radius:12px;
+      background:rgba(255,255,255,0.98); box-shadow:0 4px 20px rgba(0,0,0,0.25);
+    }
+    /* Toggle the styles menu */
+    #styleFab.open #stylePopup{ display:block; }
+
+    /* Small style “tiles” (just visual buttons) */
+    .swatches{ display:flex; gap:10px; }
+    .tile{
+      width:85px; height:60px; border-radius:10px; border:2px solid #cbd5e1;
+      cursor:pointer; display:flex; align-items:center; justify-content:center;
+      font:14px/1.2 system-ui, sans-serif; color:#111827;
+      background:#f8fafc; box-shadow:0 2px 6px rgba(0,0,0,0.15);
+      transition:all .15s ease;
+    }
+    .tile.dark{ background:#2b2b2b; color:#fff; }
+    .tile.light{ background:#ffffff; }
+    .tile.sat{ background:#5f7a5f; color:#fff; }
+    .tile:hover{ transform:translateY(-2px); box-shadow:0 4px 10px rgba(0,0,0,0.2); }
+    .tile.active{ background:#4caf50; border-color:#2e7d32; color:#fff; font-weight:600; transform:scale(1.05); }
+
+    /* ====== Time player (bottom bar) ====== */
+    #player {
+      position: absolute; left: 14px; right: 14px; bottom: 14px;
+      z-index: 6; background: #fff; border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.15); padding: 12px;
+      display: grid; grid-template-columns: 1fr auto auto; gap: 12px;
+      align-items: center; font: 14px/1.4 system-ui, sans-serif; border: 2px solid #54a2f5;
+    }
+    /* Only appears when Traffic or Noise layers are visible */
+    #player.hidden { display: none; }
+
+    /* Colorbar and its min/max labels */
+    #legendBar { display:flex; align-items:center; gap:10px; }
+    #cbar { width:260px; height:12px; border-radius:6px; border:1px solid #e5e7eb; }
+    #minLbl, #maxLbl { font-size:12px; color:#374151; }
+
+    .controls { display:flex; align-items:center; gap:8px; }
+    .btn{
+      width:40px; height:40px; border-radius:50%; background:#54a2f5; color:#fff; font-size:16px;
+      border:none; box-shadow:0 3px 6px rgba(0,0,0,.2); cursor:pointer; transition:all .15s ease;
+    }
+    .btn:hover{ transform:scale(1.1); background:#54a2f5; }
+
+    .right{ display:flex; gap:8px; }
+    select{
+      padding:6px 12px; border-radius:8px; border:1px solid #54a2f5;
+      background:#fff; color:#111827; font-weight:500; cursor:pointer;
+    }
+    select:focus{ outline:2px solid #54a2f5; }
+
+    /* Timeline (bottom row) */
+    .timeline{
+      grid-column:1 / -1; display:flex; align-items:center; gap:12px;
+      border-top:2px solid #54a2f5; padding-top:8px;
+    }
+    .label{ min-width:240px; color:#111827; font-size:13px; font-weight:500; }
+
+    /* Slider styling */
+    input[type=range]{
+      flex:1; appearance:none; height:6px; border-radius:6px;
+      background:linear-gradient(to right, #54a2f5, #54a2f5); outline:none;
+    }
+    input[type=range]::-webkit-slider-thumb{
+      -webkit-appearance:none; width:20px; height:20px; border-radius:50%;
+      background:#54a2f5; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.25); cursor:pointer;
+    }
+
+    /* Small floating tooltip for the slider value (date) */
+    #sliderTip{
+      position:absolute; padding:6px 10px; border-radius:8px;
+      background:rgba(55,65,81,0.9); color:#fff; font-size:13px;
+      transform:translate(-50%,-130%); pointer-events:none; display:none; text-align:center;
+    }
+
+    /* ====== Hover tooltips for map layers (Deck.gl picking) ====== */
+    #tooltip{
+      position:absolute; z-index:10; pointer-events:none; display:none;
+      max-width:280px; padding:8px 10px; border-radius:8px;
+      background:rgba(17,24,39,0.92); color:#fff; font:13px/1.35 system-ui, sans-serif;
+      box-shadow:0 6px 18px rgba(0,0,0,.25); transform:translate(12px,12px);
+      white-space:nowrap; text-overflow:ellipsis; overflow:hidden;
+    }
+    #tooltip h5{ margin:0 0 6px; font-size:13px; font-weight:700; }
+    #tooltip .muted{ color:#cbd5e1; font-size:12px; }
+  </style>
+</head>
+<body>
+  <!-- The map canvas -->
+  <div id="map"></div>
+
+  <!-- Hover tooltip container for Deck.gl features -->
+  <div id="tooltip"></div>
+
+  <!-- Simple “legend” panel with layer toggles -->
+  <div id="panel">
+    <h4>Livelli</h4>
+    <label><input id="chkBuildings" type="checkbox"> Edifici</label>
+    <label><input id="chkRoads" type="checkbox"> Rete stradale</label>
+    <label><input id="chkTraffic" type="checkbox"> Traffico</label>
+    <label><input id="chkNoise" type="checkbox"> Rumore</label>
+  </div>
+
+  <!-- Style switcher (Dark / Light / “Satellite” overlay) -->
+  <div id="styleFab">
+    <button id="styleBtn" title="Change map style">
+      <!-- Minimalistic icon -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M9 18l-5 2V6l5-2 6 2 5-2v14l-5 2-6-2z"/>
+        <path d="M9 4v14M15 6v14"/>
+      </svg>
+    </button>
+    <div id="stylePopup">
+      <div class="swatches">
+        <button class="tile dark"  data-style="Dark">Dark</button>
+        <button class="tile light active" data-style="Light">Light</button>
+        <button class="tile sat"   data-style="Satellite">Satellite</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Time player (appears when Traffic or Noise is toggled) -->
+  <div id="player" class="hidden">
+    <!-- Colorbar + min/max labels -->
+    <div id="legendBar">
+      <span id="minLbl">Min val</span>
+      <canvas id="cbar"></canvas>
+      <span id="maxLbl">Max val</span>
+    </div>
+
+    <!-- Prev / Play / Next -->
+    <div class="controls">
+      <button class="btn" id="btnPrev">⏮</button>
+      <button class="btn" id="btnPlay">▶️</button>
+      <button class="btn" id="btnNext">⏭</button>
+    </div>
+
+    <!-- Variable selector + Scope selector -->
+    <div class="right">
+      <select id="varSel"></select>
+      <select id="scopeSel">
+        <option value="filtered" selected>Intervalle</option>
+        <option value="global">Globale</option>
+      </select>
+    </div>
+
+    <!-- Timeline: global min/max labels + range input + small date tooltip -->
+    <div class="timeline">
+      <div class="label" id="leftLabel">—</div>
+      <div style="position:relative; flex:1;">
+        <input id="range" type="range" min="0" max="0" step="1" value="0" />
+        <div id="sliderTip"></div>
+      </div>
+      <div class="label" id="rightLabel">—</div>
+    </div>
+  </div>
+
+  <!-- MapLibre + Deck.gl bundles -->
+  <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/deck.gl@8.9.36/dist.min.js"></script>
+
+  <script>
+    /* ============================ *
+     *           CONSTANTS          *
+     * ============================ */
+
+    // Two vector basemap styles; "Satellite" is implemented as a raster overlay on top of Light
+    const STYLES = {
+      Dark:  'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+      Light: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+    };
+
+    // ESRI World Imagery as a raster tiles overlay (used when style = "Satellite")
+    const ESRI_RASTER = {
+      id: 'esri-sat',
+      source: { type:'raster', tiles:['https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize:256 },
+      layer:  { id:'esri-sat', type:'raster', source:'esri-sat', paint:{'raster-fade-duration':0} }
+    };
+
+    // DOM helpers
+    const $ = id => document.getElementById(id);
+    // Simple formatter: replace T with space or show dash
+    const fmt = s => s ? s.replace('T',' ') : '—';
+
+    /* ============================ *
+     *        TOOLTIP HELPERS       *
+     * ============================ */
+
+    // Tooltip (hover) shared element (for Deck.gl picking)
+    const tipEl = $('tooltip');
+
+    // Position the tooltip where Deck.gl tells us (screen pixel coords)
+    function showTooltipAt(info, html){
+      if(!info || !info.coordinate){ hideTooltip(); return; }
+      tipEl.innerHTML = html;
+      tipEl.style.display = 'block';
+      tipEl.style.left = info.x + 'px';
+      tipEl.style.top  = info.y + 'px';
+    }
+    function hideTooltip(){ tipEl.style.display = 'none'; }
+
+    // Small HTML helper for key/value rows inside the tooltip
+    function htmlRow(label, value){
+      const v = (value===undefined || value===null || (Number.isFinite(value) && isNaN(value))) ? '—' : value;
+      return `<div><span class="muted">${label}:</span> ${v}</div>`;
+    }
+
+    // Returns an HTML snippet depending on which layer is hovered
+    function tooltipHTML(info){
+      if(!info || !info.object) return '';
+      const id = info.layer && info.layer.id || '';
+      const p  = info.object.properties || {};
+
+      if(id === 'buildings' || id === 'buildings-3d'){
+        return `<h5>Building</h5>${htmlRow('PK', p.PK)}${htmlRow('Height', p.HEIGHT)}${htmlRow('Population', p.POP)}`;
+      }
+      if(id === 'traffic'){
+        return `<h5>Traffic</h5>${htmlRow('var', curVar)}${htmlRow('value', p[curVar])}${htmlRow('begin', p.begin)}${htmlRow('end', p.end)}${htmlRow('id', p.id)}`;
+      }
+      if(id === 'roads'){ return `<h5>Road</h5>${htmlRow('id', p.id)}`; }
+      if(id === 'noise'){ return `<h5>Noise</h5>${htmlRow('PK', p.PK)}${htmlRow('begin', p.begin)}${htmlRow('end', p.end)}`; }
+
+      // Generic fallback (first 6 props)
+      return `<h5>Info</h5>${Object.entries(p).slice(0,6).map(([k,v])=>htmlRow(k,v)).join('')}`;
+    }
+
+    /* ============================ *
+     *        MAP INITIALIZATION    *
+     * ============================ */
+
+    // Create the MapLibre map (vector basemap only; Deck.gl overlay comes later)
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: STYLES.Light,            // default style
+      center: [10.401, 43.716],       // Pisa area
+      zoom: 12,
+      hash: true                      // keep view state in URL hash for sharing
+    });
+
+    // Put zoom buttons on the right, compass on the left
+    map.addControl(new maplibregl.NavigationControl({ showZoom:true, showCompass:false }), 'top-right');
+    map.addControl(new maplibregl.NavigationControl({ showZoom:false, showCompass:true, visualizePitch:true }), 'top-left');
+
+    // Style switcher popup logic (open/close on click; close when clicking outside)
+    const styleFab=$('styleFab');
+    $('styleBtn').onclick=()=>styleFab.classList.toggle('open');
+    document.addEventListener('click',e=>{ if(!styleFab.contains(e.target)) styleFab.classList.remove('open'); });
+
+    // Update active tile button styling
+    function setActiveTile(name){
+      document.querySelectorAll('#stylePopup .tile').forEach(t=>t.classList.remove('active'));
+      const btn=document.querySelector(`#stylePopup .tile[data-style="${name}"]`);
+      if(btn) btn.classList.add('active');
+    }
+
+    // Apply a basemap style; for "Satellite" we keep Light and add ESRI imagery overlay
+    function applyStyle(name){
+      const center=map.getCenter(), zoom=map.getZoom(), bearing=map.getBearing(), pitch=map.getPitch();
+      // setStyle reloads the style; we jump back to previous camera on 'styledata'
+      const apply=(url,after)=>{ map.setStyle(url); map.once('styledata',()=>{ map.jumpTo({center,zoom,bearing,pitch}); after&&after(); }); };
+      const addSat=()=>{ if(!map.getSource(ESRI_RASTER.id)) map.addSource(ESRI_RASTER.id,ESRI_RASTER.source);
+                         if(!map.getLayer(ESRI_RASTER.id))  map.addLayer(ESRI_RASTER.layer); };
+      const rmSat=()=>{ if(map.getLayer(ESRI_RASTER.id))  map.removeLayer(ESRI_RASTER.id);
+                        if(map.getSource(ESRI_RASTER.id)) map.removeSource(ESRI_RASTER.id); };
+
+      if(name==='Satellite') apply(STYLES.Light, addSat);
+      else if(name==='Dark') apply(STYLES.Dark, rmSat);
+      else apply(STYLES.Light, rmSat);
+
+      setActiveTile(name);
+    }
+
+    // Wire up the style buttons
+    document.querySelectorAll('#stylePopup .tile').forEach(b=>{
+      b.onclick=()=>{ applyStyle(b.dataset.style); styleFab.classList.remove('open'); };
+    });
+
+    /* ============================ *
+     *          DECK.LG LAYERS      *
+     * ============================ */
+
+    // Single Deck.gl overlay injected into MapLibre (we update its "layers" prop)
+    let overlay=null;
+
+    // Roads as thin colored lines (visible from zoom >= 10)
+    function roadsLayer(){ return new deck.GeoJsonLayer({
+      id:'roads',
+      data:'/api/map/roads',
+      stroked:true,
+      getLineColor:[135,206,235,220],
+      getLineWidth:3,
+      visible: $('chkRoads').checked && map.getZoom()>=10,
+      pickable:true,
+      onHover: info => info.object ? showTooltipAt(info, tooltipHTML(info)) : hideTooltip()
+    });}
+
+    // Buildings as subtle 3D extrusions in grey, reading HEIGHT from feature properties
+    function buildingsLayer(){ return new deck.GeoJsonLayer({
+      id:'buildings',
+      data:'/api/map/buildings',
+      extruded:true,
+      getElevation: f => {
+        const h = f.properties?.HEIGHT;
+        const base = (typeof h === 'number') ? h : 10;
+        return Math.max(base * 0.3, 2);        // light 3D: 30% of HEIGHT, min 2m
+      },
+      getFillColor:[150,150,150,200],         // neutral grey
+      wireframe:false,
+      pickable:true,
+      visible: $('chkBuildings').checked,
+      onHover: info => info.object ? showTooltipAt(info, tooltipHTML(info)) : hideTooltip()
+    });}
+
+    // Simple green→yellow→red color ramp for traffic intensity
+    function colorRampRGBA(v,min,max){
+      if(v==null||!isFinite(v)||min==null||max==null||max<=min) return [200,200,200,120];
+      const t=Math.max(0,Math.min(1,(v-min)/(max-min+1e-9)));
+      const r=t<.5?2*t*255:255, g=t<.5?255:(1-2*(t-.5))*255;
+      return [Math.round(r),Math.round(g),0,220];
+    }
+
+    // Draw/update the colorbar + text labels
+    function drawColorbar(min,max){
+      const cv=$('cbar'),ctx=cv.getContext('2d'); cv.width=260; cv.height=12;
+      const g=ctx.createLinearGradient(0,0,cv.width,0);
+      g.addColorStop(0,'#00ff00'); g.addColorStop(.5,'#ffff00'); g.addColorStop(1,'#ff0000');
+      ctx.clearRect(0,0,cv.width,cv.height); ctx.fillStyle=g; ctx.fillRect(0,0,cv.width,cv.height);
+      $('minLbl').textContent=min==null?'Min val':String(min);
+      $('maxLbl').textContent=max==null?'Max val':String(max);
+    }
+
+    /* ============================ *
+     *      TRAFFIC / NOISE LAYERS  *
+     * ============================ */
+
+    // Player state, shared across traffic layer & UI
+    let intervals=[], curIndex=0, playing=false, timer=null;
+    let curVar='vehicles', curScope='filtered', curStart=null, curEnd=null, curMin=null, curMax=null;
+
+    // Available variables (e.g., vehicles, speed, speedRelative, …)
+    async function getVars(){
+      const r=await fetch('/api/map/traffic/vars');
+      if(!r.ok) return [];
+      const j=await r.json();
+      return j.variables||[];
+    }
+
+    // Min/max API (either for the filtered interval or global scope)
+    async function getMinMax(variable,start,end,scope){
+      const p=new URLSearchParams(); if(variable)p.set('var',variable); if(start)p.set('start',start); if(end)p.set('end',end); if(scope)p.set('scope',scope);
+      const r=await fetch('/api/map/traffic/minmax?'+p.toString());
+      if(!r.ok) return {min:null,max:null};
+      return r.json();
+    }
+
+    // Extract all unique (begin,end) from traffic GeoJSON (for the slider)
+    async function getAllIntervals(){
+      const r=await fetch('/api/map/traffic');
+      if(!r.ok) return [];
+      const j=await r.json(); const uniq=new Map();
+      for(const ft of (j.features||[])){
+        const b=ft.properties?.begin, e=ft.properties?.end;
+        if(b&&e) uniq.set(`${b}|${e}`,{begin:b,end:e});
+      }
+      return Array.from(uniq.values()).sort((a,b)=>a.begin.localeCompare(b.begin));
+    }
+
+    // Build the traffic layer (async because we fetch min/max first)
+    async function trafficLayer(){
+      const st=await getMinMax(curVar,curStart,curEnd,curScope);
+      curMin=st.min; curMax=st.max; drawColorbar(curMin,curMax);
+
+      const p=new URLSearchParams();
+      p.set('var',curVar);
+      if(curStart)p.set('start',curStart);
+      if(curEnd)p.set('end',curEnd);
+      p.set('scope',curScope);
+
+      return new deck.GeoJsonLayer({
+        id:'traffic',
+        data:'/api/map/traffic?'+p.toString(),
+        lineWidthUnits:'pixels',
+        getLineWidth:3,
+        getLineColor:f=>colorRampRGBA(f?.properties?.[curVar],curMin,curMax),
+        visible:$('chkTraffic').checked && map.getZoom()>=12,
+        pickable:true,
+        onHover: info => info.object ? showTooltipAt(info, tooltipHTML(info)) : hideTooltip()
+      });
+    }
+
+    // Placeholder noise layer (tweak fields/colors when your API provides noise data)
+    function noiseLayer(){ return new deck.GeoJsonLayer({
+      id:'noise', data:'/api/map/noise', filled:true,
+      getFillColor:[255,0,255,40], visible:$('chkNoise').checked,
+      pickable:true,
+      onHover: info => info.object ? showTooltipAt(info, tooltipHTML(info)) : hideTooltip()
+    });}
+
+    // (Re)render all layers in a single overlay; also toggle player visibility
+    async function refresh(){
+      const layers=[ roadsLayer(), buildingsLayer(), noiseLayer(), await trafficLayer() ];
+      if(!overlay){ overlay=new deck.MapboxOverlay({interleaved:true,layers}); map.addControl(overlay); }
+      else overlay.setProps({layers});
+      const visible = $('chkTraffic').checked || $('chkNoise').checked;
+      $('player').classList.toggle('hidden', !visible);
+    }
+
+    /* ============================ *
+     *           PLAYER UX          *
+     * ============================ */
+
+    // Update the “active window” used by the traffic request (curStart/curEnd).
+    // We keep the timeline labels (left/right) GLOBAL — set once on load.
+    function syncFromIndex(){
+      const it=intervals[curIndex]; if(!it) return;
+      curStart = it.begin.replace(' ','T');
+      curEnd   = it.end.replace(' ','T');
+    }
+
+    // Play/pause: auto-advance the index; stop at the last interval
+    function togglePlay(){
+      if(playing){
+        playing=false; clearInterval(timer);
+        $('btnPlay').textContent='▶️';
+        refresh(); return;
+      }
+      playing=true; $('btnPlay').textContent='⏸'; refresh();
+      timer=setInterval(async ()=>{
+        if(!intervals.length) return;
+        curIndex=Math.min(intervals.length-1,curIndex+1);
+        $('range').value=String(curIndex);
+        syncFromIndex(); await refresh();
+        if(curIndex>=intervals.length-1) togglePlay();
+      },800);
+    }
+
+    // Small date tooltip following the slider thumb while dragging
+    const tip=$('sliderTip');
+    function showTipAtRange(){
+      if(!intervals.length) return;
+      const idx=Number($('range').value);
+      const it=intervals[idx];
+      tip.textContent = it ? fmt(it.begin) : '—';
+      const r=$('range'); const rect=r.getBoundingClientRect();
+      const t=(idx-Number(r.min))/(Number(r.max)-Number(r.min) || 1);
+      const x=rect.left + t*rect.width;
+      tip.style.left = x + 'px';
+      tip.style.top  = (rect.top - 8) + 'px';
+    }
+
+    /* ============================ *
+     *              INIT            *
+     * ============================ */
+
+    map.on('load', async ()=>{
+      // 1) Populate variable selector; fall back to common defaults
+      const vars=await getVars(); const vs=$('varSel');
+      vs.innerHTML='';
+      (vars.length?vars:['vehicles','speed','speedRelative']).forEach(v=>{
+        const o=document.createElement('option'); o.value=v; o.textContent=v; vs.appendChild(o);
+      });
+      curVar=vs.value;
+
+      // 2) Gather all unique time intervals to drive the slider
+      intervals=await getAllIntervals();
+      const r=$('range'); r.min='0'; r.max=String(Math.max(0,intervals.length-1));
+
+      // 3) Start on the latest interval (common dashboard pattern)
+      curIndex=Math.max(0,intervals.length-1); r.value=String(curIndex);
+
+      // 4) Global timeline labels = dataset bounds (fixed)
+      $('leftLabel').textContent  = fmt(intervals[0]?.begin);
+      $('rightLabel').textContent = fmt(intervals.at(-1)?.end);
+
+      // 5) Update active window + first render
+      syncFromIndex();
+      await refresh();
+    });
+
+    // Re-render on map zoom (because some layers have zoom-based visibility)
+    map.on('zoomend', refresh);
+
+    // Wire up UI events
+    ['chkBuildings','chkRoads','chkTraffic','chkNoise'].forEach(id=>{
+      $(id).addEventListener('change', ()=>{ refresh(); });
+    });
+    $('varSel').addEventListener('change', async e=>{ curVar=e.target.value; await refresh(); });
+    $('scopeSel').addEventListener('change', async e=>{ curScope=e.target.value; await refresh(); });
+
+    $('btnPrev').onclick=async()=>{
+      if(!intervals.length) return;
+      curIndex=Math.max(0,curIndex-1);
+      $('range').value=String(curIndex);
+      syncFromIndex(); await refresh();
+    };
+    $('btnNext').onclick=async()=>{
+      if(!intervals.length) return;
+      curIndex=Math.min(intervals.length-1,curIndex+1);
+      $('range').value=String(curIndex);
+      syncFromIndex(); await refresh();
+    };
+    $('btnPlay').onclick=togglePlay;
+
+    // Slider: show moving tooltip while dragging; hide on change/end
+    $('range').addEventListener('input', ()=>{
+      curIndex=Number($('range').value);
+      syncFromIndex();
+      showTipAtRange(); tip.style.display='block';
+    });
+    $('range').addEventListener('change', async ()=>{
+      tip.style.display='none';
+      await refresh();
+    });
+    $('range').addEventListener('mouseleave', ()=>{ tip.style.display='none'; });
+
+    // Hide hover tooltip when the user leaves the map or drags the map
+    map.on('mouseleave', () => hideTooltip());
+    map.on('dragstart', () => hideTooltip());
+  </script>
+</body>
+</html>

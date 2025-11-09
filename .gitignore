@@ -1,0 +1,23 @@
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore virtual environment
+.venv/
+env/
+venv/
+.env
+
+# Ignore IDE configs
+.vscode/
+.idea/
+.DS_Store
+
+# Ignore logs
+*.log
+
+# (Optional) Ignore heavy data files
+*.parquet
+*.geojson
